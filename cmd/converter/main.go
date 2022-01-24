@@ -9,7 +9,7 @@ import (
 
 func main() {
 	log.Println("Hello from the converter!")
-	parser, products := org.NewParser()
+	parser, products := org.NewScanner()
 	bytes, err := os.ReadFile("content/homepage.org")
 	if err != nil {
 		log.Fatalf("bad things happened: %s", err)

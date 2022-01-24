@@ -1,8 +1,31 @@
 #+TITLE: This is a title
+#+TODO: TODO PLAY | DONE MNORGE
 
 Welcome to my homepage, there are many like it, but this one is mine!
 
 
-*                  This is a title
+*                  This is a title :fun:work:stuff:
 
-** This is another title
+** PLAY This is another title :work_oiuo:foo:bar:
+
+This is some other text
+
+:PROPERTIES:
+:STYLE:    slurm
+:END:
+
+This is some text right here.  Before the drawer
+
+#+BEGIN
+This some stuff in a block
+#+END
+
+
+    :foo:
+    :GAGA: blorb
+    :END:
+
+*** This is a third title :play:
+
+*** MNORGE Floombo!
+**** Whoa!
