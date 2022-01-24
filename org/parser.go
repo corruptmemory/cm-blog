@@ -1,6 +1,9 @@
 package org
 
-import "fmt"
+import (
+	"bytes"
+	"fmt"
+)
 
 type NodeType int
 
@@ -83,6 +86,28 @@ func (h *HeadlineNode) Span() Span {
 	return h.span
 }
 
+func (h *HeadlineNode) String() string {
+	return fmt.Sprintf("Headline[%d, '%s']", h.Level, h.Body)
+}
+
+type TextNode struct {
+	span Span
+	buf  *bytes.Buffer
+	Body string
+}
+
+func (t *TextNode) Type() NodeType {
+	return Text
+}
+
+func (t *TextNode) Span() Span {
+	return t.span
+}
+
+func (t *TextNode) String() string {
+	return fmt.Sprintf("Text[%s]", t.Body)
+}
+
 type Parser struct {
 	out    chan Node
 	line   int
@@ -114,39 +139,34 @@ func (p *Parser) snagHeadline() int {
 		if c == '*' {
 			continue
 		}
-		return i+1
+		return i + 1
 	}
 	return 0
 }
 
 func (p *Parser) currentPoint() Point {
-  return Point{
-  	Line:   p.line + 1,
-  	Offset: p.offset + 1,
-  }
+	return Point{
+		Line:   p.line + 1,
+		Offset: p.offset + 1,
+	}
 }
 
 func (p *Parser) currentLine() int {
-  return p.line + 1
+	return p.line + 1
 }
 
-func (p *Parser) nextLine()  {
-  p.line++
+func (p *Parser) nextLine() {
+	p.line++
 }
 
-func (p *Parser) resetBufferWith(in string)  {
-  p.buffer = p.buffer[:0]
-	p.appendInput(in)
-}
-
-func (p *Parser) appendInput(in string)  {
+func (p *Parser) appendInput(in string) {
 	for _, r := range in {
 		p.buffer = append(p.buffer, r)
-	}  
+	}
 }
 
 func (p *Parser) findEOL(from int) int {
-  for i, r := range p.buffer[from:] {
+	for i, r := range p.buffer[from:] {
 		if r == '\n' {
 			return i
 		}
@@ -165,19 +185,21 @@ func (p *Parser) isHeadlinePrefix() bool {
 		}
 		return false
 	}
+	return false
 }
 
 func (p *Parser) determineState() {
 	if p.isHeadlinePrefix() {
 		p.state = headline
 		p.node = &HeadlineNode{
-			span:  Span{
+			span: Span{
 				Start: p.currentPoint(),
-				End: Point{Line:p.currentLine()},
+				End:   Point{Line: p.currentLine()},
 			},
 		}
 	}
 	p.state = text
+	p.node = nil
 }
 
 func isSpace(in rune) bool {
@@ -190,8 +212,29 @@ func isSpace(in rune) bool {
 }
 
 func (p *Parser) findWhitespaceDelimitedString(start, end int) string {
-  s := start
-	for ;isSpace(
+	s := start
+	for ; isSpace(p.buffer[s]); s++ {
+	}
+	e := end
+	for ; isSpace(p.buffer[e]); e-- {
+	}
+	return string(p.buffer[s:e])
+}
+
+func (p *Parser) advanceLine() {
+	eol := p.findEOL(0)
+	if eol > 0 {
+		p.nextLine()
+		p.offset = 0
+		eol++
+		if eol < len(p.buffer) {
+			tail := len(p.buffer[eol:])
+			copy(p.buffer[0:], p.buffer[eol:])
+			p.buffer = p.buffer[:tail]
+		} else {
+			p.buffer = p.buffer[:0]
+		}
+	}
 }
 
 // Consume takes in a fragment of an Org doc and tries to parse it.
@@ -205,29 +248,65 @@ func (p *Parser) Consume(in string) error {
 	if p.state == empty {
 		p.determineState()
 	}
-	switch p.state {
-	case headline:
-		eol := p.findEOL(0)
-		if eol > 0 {
-			node := p.node.(*HeadlineNode)
-			node.span.End.Offset = eol-1
-			node.Level = p.snagHeadline()
-			
+	for {
+		switch p.state {
+		case headline:
+			eol := p.findEOL(0)
+			if eol > 0 {
+				node := p.node.(*HeadlineNode)
+				node.span.End.Offset = eol - 1
+				node.Level = p.snagHeadline()
+				node.Body = p.findWhitespaceDelimitedString(node.Level, eol-1)
+				p.out <- node
+				p.advanceLine()
+				p.determineState()
+				continue
+			}
+			return nil
+		case text:
+			if p.node == nil {
+				p.node = &TextNode{
+					span: Span{
+						Start: p.currentPoint(),
+					},
+					buf: &bytes.Buffer{},
+				}
+			}
+			eol := p.findEOL(0)
+			if eol > 0 {
+				node := p.node.(*TextNode)
+				node.span.End.Line = p.currentLine()
+				node.span.End.Offset = eol
+				node.buf.WriteString(string(p.buffer[0 : eol+1]))
+				p.advanceLine()
+				p.determineState()
+				if p.state != text {
+					node.Body = node.buf.String()
+					node.buf = nil
+					p.out <- node
+				}
+				continue
+			}
 		}
-	case text:
-		
 	}
-	if in[0] == '*' {
-		p.state = headline
-		p.resetBufferWith(in)
-		eol := p.findEOL(node.Level)
-		if eol >= 0 {
-		}
-	}
-
-	return nil
 }
 
 func (p *Parser) EOF() {
-  
+	switch p.state {
+	case headline:
+		node := p.node.(*HeadlineNode)
+		node.span.End.Offset = len(p.buffer)
+		node.Level = p.snagHeadline()
+		node.Body = p.findWhitespaceDelimitedString(node.Level, len(p.buffer)-1)
+		p.out <- node
+	case text:
+		node := p.node.(*TextNode)
+		node.span.End.Line = p.currentLine()
+		node.span.End.Offset = len(p.buffer)
+		node.buf.WriteString(string(p.buffer[0:len(p.buffer)]))
+		node.Body = node.buf.String()
+		node.buf = nil
+		p.out <- node
+	}
+	close(p.out)
 }
