@@ -16,7 +16,17 @@ func main() {
 	}
 	stuff := string(bytes)
 
-	err = parser.Consume(stuff)
+	stuff1 := stuff[0 : len(stuff)/2]
+	stuff2 := stuff[len(stuff1):]
+
+	err = parser.Consume(stuff1)
+	if err != nil {
+		log.Fatalf("nope1: %s", err)
+	}
+	err = parser.Consume(stuff2)
+	if err != nil {
+		log.Fatalf("nope2: %s", err)
+	}
 	parser.EOF()
 	for r := range products {
 		log.Println(r)

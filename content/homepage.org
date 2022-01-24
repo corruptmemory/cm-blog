@@ -3,4 +3,6 @@
 Welcome to my homepage, there are many like it, but this one is mine!
 
 
-* This is a title
+*                  This is a title
+
+** This is another title

@@ -119,7 +119,7 @@ type Parser struct {
 
 // NewParser creates a new Parser
 func NewParser() (*Parser, <-chan Node) {
-	c := make(chan Node)
+	c := make(chan Node, 100)
 	return &Parser{
 		out: c,
 	}, c
@@ -139,7 +139,7 @@ func (p *Parser) snagHeadline() int {
 		if c == '*' {
 			continue
 		}
-		return i + 1
+		return i
 	}
 	return 0
 }
@@ -189,6 +189,11 @@ func (p *Parser) isHeadlinePrefix() bool {
 }
 
 func (p *Parser) determineState() {
+	if len(p.buffer) == 0 {
+		p.state = empty
+		p.node = nil
+		return
+	}
 	if p.isHeadlinePrefix() {
 		p.state = headline
 		p.node = &HeadlineNode{
@@ -197,9 +202,9 @@ func (p *Parser) determineState() {
 				End:   Point{Line: p.currentLine()},
 			},
 		}
+		return
 	}
 	p.state = text
-	p.node = nil
 }
 
 func isSpace(in rune) bool {
@@ -223,7 +228,7 @@ func (p *Parser) findWhitespaceDelimitedString(start, end int) string {
 
 func (p *Parser) advanceLine() {
 	eol := p.findEOL(0)
-	if eol > 0 {
+	if eol >= 0 {
 		p.nextLine()
 		p.offset = 0
 		eol++
@@ -235,6 +240,10 @@ func (p *Parser) advanceLine() {
 			p.buffer = p.buffer[:0]
 		}
 	}
+}
+
+func (p *Parser) consumeAll() {
+	p.buffer = p.buffer[:0]
 }
 
 // Consume takes in a fragment of an Org doc and tries to parse it.
@@ -249,15 +258,21 @@ func (p *Parser) Consume(in string) error {
 		p.determineState()
 	}
 	for {
+		if len(p.buffer) == 0 {
+			return nil
+		}
 		switch p.state {
+		case empty:
+			return nil
 		case headline:
 			eol := p.findEOL(0)
+			node := p.node.(*HeadlineNode)
 			if eol > 0 {
-				node := p.node.(*HeadlineNode)
 				node.span.End.Offset = eol - 1
 				node.Level = p.snagHeadline()
-				node.Body = p.findWhitespaceDelimitedString(node.Level, eol-1)
+				node.Body = p.findWhitespaceDelimitedString(node.Level, eol)
 				p.out <- node
+				p.node = nil
 				p.advanceLine()
 				p.determineState()
 				continue
@@ -273,8 +288,8 @@ func (p *Parser) Consume(in string) error {
 				}
 			}
 			eol := p.findEOL(0)
-			if eol > 0 {
-				node := p.node.(*TextNode)
+			node := p.node.(*TextNode)
+			if eol >= 0 {
 				node.span.End.Line = p.currentLine()
 				node.span.End.Offset = eol
 				node.buf.WriteString(string(p.buffer[0 : eol+1]))
@@ -286,6 +301,11 @@ func (p *Parser) Consume(in string) error {
 					p.out <- node
 				}
 				continue
+			} else {
+				node.span.End.Line = p.currentLine()
+				node.span.End.Offset = len(p.buffer)
+				node.buf.WriteString(string(p.buffer[0:len(p.buffer)]))
+				p.consumeAll()
 			}
 		}
 	}
