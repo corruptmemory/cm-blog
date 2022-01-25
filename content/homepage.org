@@ -1,7 +1,15 @@
 #+TITLE: This is a title
 #+TODO: TODO PLAY | DONE MNORGE
 
+# This is just a regular comment.  Nothing to see here!
+# As you can see, comments can be smushed together
+     # Comments can have indentation, but the scanner doesn't really care.
+
+# With text in between
+
 Welcome to my homepage, there are many like it, but this one is mine!
+
+# This is a comment at the end of the line
 
 
 *                  This is a title :fun:work:stuff:
@@ -26,6 +34,15 @@ This some stuff in a block
     :END:
 
 *** This is a third title :play:
+I would like to thank the Academy for this award.  Being an actor I will likely talk for far too long.
 
+Why?  Because reasons.
+
+I am trained in the art of talking.  I can do it well, all my teachers are proud of me.  I can go on about
+a great many subjects and I'm more interesting than the average Joe in conversation.  Since I appear in movies
+and TV shows you know me, and many of you like me.  Therefore, you will likely be interested in what I have to say.
+
+These days I mostly worry about my Slipstream RV.  It's a beaut, but I could use an upgrade.  If anyone is interested
+let me know and we can work out a deal.
 *** MNORGE Floombo!
 **** Whoa!

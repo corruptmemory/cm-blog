@@ -40,7 +40,10 @@ const (
 	FootnoteDefinition
 )
 
-var keywordRegexp = regexp.MustCompile("^[ \t]*#\\+([0-9a-zA-Z_@]+):([^\n]*)")
+var (
+	keywordRegexp = regexp.MustCompile("^[ \t]*#\\+([0-9a-zA-Z_@\\[\\]]+):([^\n]*)")
+	commentRegexp = regexp.MustCompile("^[ \t]*#([^+][^\n]*)")
+)
 
 type ScannerError struct {
 	message string
@@ -83,6 +86,7 @@ const (
 	keyword
 	text
 	headline
+	comment
 )
 
 type HeadlineNode struct {
@@ -120,6 +124,24 @@ func (k *KeywordNode) Span() Span {
 
 func (k *KeywordNode) Type() NodeType {
 	return Keyword
+}
+
+type CommentNode struct {
+	span Span
+	buf  *bytes.Buffer
+	Body string
+}
+
+func (c *CommentNode) String() string {
+	return fmt.Sprintf("Comment[%s; %s]", c.Body, c.span)
+}
+
+func (c *CommentNode) Span() Span {
+	return c.span
+}
+
+func (c *CommentNode) Type() NodeType {
+	return Comment
 }
 
 type TextNode struct {
@@ -256,17 +278,35 @@ func (p *Scanner) isKeywordLine() (keyword string, value string, match bool) {
 	return
 }
 
+func (p *Scanner) isCommentLine() (body string, match bool) {
+	m := commentRegexp.FindSubmatch(p.buffer)
+	if len(m) > 0 {
+		return string(m[1]), true
+	}
+	return
+}
+
 func (p *Scanner) containsLine() bool {
 	return bytes.ContainsRune(p.buffer, '\n')
 }
 
 func (p *Scanner) determineState() {
+	possiblyCloseText := func() {
+		if p.state == text {
+			node := p.node.(*TextNode)
+			node.Body = node.buf.String()
+			node.buf = nil
+			p.state = empty
+			p.out <- node
+		}
+	}
 	if len(p.buffer) == 0 {
 		p.state = empty
 		p.node = nil
 		return
 	}
 	if kw, v, kwl := p.isKeywordLine(); kwl {
+		possiblyCloseText()
 		p.state = keyword
 		p.node = &KeywordNode{
 			span: Span{
@@ -278,7 +318,22 @@ func (p *Scanner) determineState() {
 		}
 		return
 	}
+	if cb, cl := p.isCommentLine(); cl {
+		possiblyCloseText()
+		p.state = comment
+		buf := &bytes.Buffer{}
+		buf.WriteString(strings.TrimSpace(cb))
+		p.node = &CommentNode{
+			span: Span{
+				Start: p.currentPoint(),
+				End:   Point{Line: p.currentLine()},
+			},
+			buf: buf,
+		}
+		return
+	}
 	if p.isHeadlinePrefix() {
+		possiblyCloseText()
 		p.state = headline
 		p.node = &HeadlineNode{
 			span: Span{
@@ -352,9 +407,7 @@ func (p *Scanner) Consume(in string) error {
 			return nil
 		}
 		eol := p.findEOL()
-		if p.state == empty {
-			p.determineState()
-		}
+		p.determineState()
 		switch p.state {
 		case empty:
 			return nil
@@ -365,6 +418,27 @@ func (p *Scanner) Consume(in string) error {
 			p.node = nil
 			p.advanceLine()
 			p.state = empty
+		case comment:
+			node := p.node.(*CommentNode)
+			node.span.End.Offset = eol + 1
+			for {
+				p.advanceLine()
+				if p.containsLine() {
+					eol = p.findEOL()
+					if cb, cl := p.isCommentLine(); cl {
+						node.buf.WriteByte('\n')
+						node.buf.WriteString(cb)
+						node.span.End.Line = p.currentLine()
+						node.span.End.Offset = eol + 1
+						continue
+					}
+					p.state = empty
+					node.Body = node.buf.String()
+					node.buf = nil
+					p.out <- node
+				}
+				break
+			}
 		case headline:
 			node := p.node.(*HeadlineNode)
 			node.span.End.Offset = eol + 1
@@ -387,9 +461,6 @@ func (p *Scanner) Consume(in string) error {
 					eol = p.findEOL()
 					p.determineState()
 					if p.state != text {
-						node.Body = node.buf.String()
-						node.buf = nil
-						p.out <- node
 						break
 					}
 				} else {
@@ -409,6 +480,10 @@ func (p *Scanner) EOF() {
 	case empty:
 	case keyword:
 		node := p.node.(*KeywordNode)
+		node.span.End.Offset = eol + 1
+		p.out <- node
+	case comment:
+		node := p.node.(*CommentNode)
 		node.span.End.Offset = eol + 1
 		p.out <- node
 	case headline:
