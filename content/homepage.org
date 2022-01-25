@@ -12,6 +12,12 @@ Welcome to my homepage, there are many like it, but this one is mine!
 # This is a comment at the end of the line
 
 
+#+begin_src emacs-lisp server
+;; *** This is a headline at the beginning of a lisp section
+(defun foo ()
+  (message "hello from foo"))
+#+end_src
+
 *                  This is a title :fun:work:stuff:
 
 ** PLAY This is another title :work_oiuo:foo:bar:

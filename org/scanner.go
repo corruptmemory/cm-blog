@@ -7,39 +7,6 @@ import (
 	"strings"
 )
 
-type NodeType int
-
-const (
-	Keyword NodeType = iota
-	Include
-	Comment
-	NodeWithMeta
-	NodeWithName
-	Headline
-	Block
-	Result
-	InlineBlock
-	Example
-	Drawer
-	List
-	ListItem
-	DescriptiveListItem
-	Table
-	HorizontalRule
-	Paragraph
-	Text
-	Emphasis
-	LatexFragment
-	StatisticToken
-	ExplicitLineBreak
-	LineBreak
-	RegularLink
-	Macro
-	Timestamp
-	FootnoteLink
-	FootnoteDefinition
-)
-
 var (
 	keywordRegexp = regexp.MustCompile("^[ \t]*#\\+([0-9a-zA-Z_@\\[\\]]+):([^\n]*)")
 	commentRegexp = regexp.MustCompile("^[ \t]*#([^+][^\n]*)")
@@ -76,7 +43,7 @@ func (s Span) String() string {
 
 type Node interface {
 	Span() Span
-	Type() NodeType
+	String() string
 }
 
 type State int
@@ -94,10 +61,6 @@ type HeadlineNode struct {
 	Level int
 	Body  string
 	Tags  []string
-}
-
-func (h *HeadlineNode) Type() NodeType {
-	return Headline
 }
 
 func (h *HeadlineNode) Span() Span {
@@ -122,10 +85,6 @@ func (k *KeywordNode) Span() Span {
 	return k.span
 }
 
-func (k *KeywordNode) Type() NodeType {
-	return Keyword
-}
-
 type CommentNode struct {
 	span Span
 	buf  *bytes.Buffer
@@ -140,18 +99,10 @@ func (c *CommentNode) Span() Span {
 	return c.span
 }
 
-func (c *CommentNode) Type() NodeType {
-	return Comment
-}
-
 type TextNode struct {
 	span Span
 	buf  *bytes.Buffer
 	Body string
-}
-
-func (t *TextNode) Type() NodeType {
-	return Text
 }
 
 func (t *TextNode) Span() Span {
