@@ -12,15 +12,71 @@ var (
 	commentRegexp = regexp.MustCompile("^[ \t]*#([^+][^\n]*)")
 )
 
-type ScannerError struct {
+type ParserError struct {
 	message string
 	line    int
 	offset  int
 }
 
 // Error to conform to the Error interface
-func (e *ScannerError) Error() string {
+func (e *ParserError) Error() string {
 	return fmt.Sprintf("parse error: %s (%d:%d)", e.message, e.line, e.offset)
+}
+
+type Scanner struct {
+	buffer  []byte
+	Pos     int
+	Line    int
+	LineLen int
+	LineBuf []byte
+	EOF     bool
+}
+
+func (s *Scanner) NextLine() bool {
+	if s.EOF {
+		s.LineBuf = nil
+		s.LineLen = 0
+		return false
+	}
+	start := s.Pos
+	p := start
+	for ; p < len(s.buffer) && s.buffer[p] != '\n'; p++ {
+	}
+	s.LineBuf = s.buffer[start:p]
+	s.Line++
+	if p < len(s.buffer) {
+		s.Pos = p + 1
+		s.LineLen = p - start
+	} else {
+		s.Pos = p
+		s.LineLen = p - start
+		s.EOF = true
+	}
+	return true
+}
+
+func (s *Scanner) Reset() {
+	s.buffer = s.buffer[:0]
+	s.Pos = 0
+	s.Line = 0
+	s.LineLen = 0
+	s.LineBuf = nil
+	s.EOF = false
+}
+
+func (s *Scanner) String() string {
+	return fmt.Sprintf("[%d:%d:%d]: %s\n", s.Line, s.Pos, s.LineLen, string(s.LineBuf))
+}
+
+func (s *Scanner) WithBytes(in []byte) {
+	s.Reset()
+	s.buffer = append(s.buffer, in...)
+}
+
+func NewScanner(in []byte) *Scanner {
+	r := &Scanner{}
+	r.WithBytes(in)
+	return r
 }
 
 type Point struct {
@@ -113,197 +169,38 @@ func (t *TextNode) String() string {
 	return fmt.Sprintf("Text[%s; %s]", t.Body, t.span)
 }
 
-type Scanner struct {
-	out    chan Node
-	line   int
-	offset int
-	state  State
-	buffer []byte
-	node   Node
+type Parser struct {
+	out     chan Node
+	scanner Scanner
+	state   State
 }
 
-// NewScanner creates a new Scanner
-func NewScanner() (*Scanner, <-chan Node) {
+func NewParser() (*Parser, <-chan Node) {
 	c := make(chan Node, 100)
-	return &Scanner{
+	return &Parser{
 		out: c,
 	}, c
 }
 
 // Reset resets the parser to the initial state
-func (p *Scanner) Reset() {
-	p.line = 0
-	p.offset = 0
+func (p *Parser) Reset() {
+	p.scanner.Reset()
 	p.state = empty
-	p.buffer = p.buffer[:0]
-
 }
 
 func isTagChar(r byte) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '@'
 }
 
-func scanHeadline(in string) (headline string, tags []string) {
-	if len(in) == 0 {
-		return
-	}
-	if in[len(in)-1] != ':' {
-		return in, nil
-	}
-	lastColon := len(in) - 1
-	for p := lastColon - 1; p > 0; p-- {
-		c := in[p]
-		if isTagChar(c) {
-			continue
-		} else if c == ':' {
-			if lastColon-p > 1 {
-				tags = append(tags, in[p+1:lastColon])
-			}
-			lastColon = p
-		} else {
-			break
-		}
-	}
-	headline = in[:lastColon]
-	return
-}
-
-func (p *Scanner) snagHeadline() int {
-	for i, c := range p.buffer {
-		if c == '*' {
-			continue
-		}
-		return i
-	}
-	return 0
-}
-
-func (p *Scanner) currentPoint() Point {
+func (p *Parser) currentPoint(offset int) Point {
 	return Point{
-		Line:   p.line + 1,
-		Offset: p.offset + 1,
+		Line:   p.scanner.Line,
+		Offset: offset,
 	}
 }
 
-func (p *Scanner) currentLine() int {
-	return p.line + 1
-}
-
-func (p *Scanner) nextLine() {
-	p.line++
-}
-
-func (p *Scanner) appendInput(in string) {
-	p.buffer = append(p.buffer, []byte(in)...)
-}
-
-func (p *Scanner) findEOL() int {
-	for i, r := range p.buffer {
-		if r == '\n' {
-			return i
-		}
-	}
-	return -1
-}
-
-func (p *Scanner) isHeadlinePrefix() bool {
-	stars := 0
-	for _, r := range p.buffer {
-		if r == '*' {
-			stars++
-			continue
-		}
-		if stars > 0 && r == ' ' {
-			return true
-		}
-		return false
-	}
-	return false
-}
-
-func (p *Scanner) isKeywordLine() (keyword string, value string, match bool) {
-	m := keywordRegexp.FindSubmatch(p.buffer)
-	if len(m) > 0 {
-		return string(m[1]), string(m[2]), true
-	}
-	return
-}
-
-func (p *Scanner) isCommentLine() (body string, match bool) {
-	m := commentRegexp.FindSubmatch(p.buffer)
-	if len(m) > 0 {
-		return string(m[1]), true
-	}
-	return
-}
-
-func (p *Scanner) containsLine() bool {
-	return bytes.ContainsRune(p.buffer, '\n')
-}
-
-func (p *Scanner) determineState() {
-	possiblyCloseText := func() {
-		if p.state == text {
-			node := p.node.(*TextNode)
-			node.Body = node.buf.String()
-			node.buf = nil
-			p.state = empty
-			p.out <- node
-		}
-	}
-	if len(p.buffer) == 0 {
-		p.state = empty
-		p.node = nil
-		return
-	}
-	if kw, v, kwl := p.isKeywordLine(); kwl {
-		possiblyCloseText()
-		p.state = keyword
-		p.node = &KeywordNode{
-			span: Span{
-				Start: p.currentPoint(),
-				End:   Point{Line: p.currentLine()},
-			},
-			Keyword: kw,
-			Value:   strings.TrimSpace(v),
-		}
-		return
-	}
-	if cb, cl := p.isCommentLine(); cl {
-		possiblyCloseText()
-		p.state = comment
-		buf := &bytes.Buffer{}
-		buf.WriteString(strings.TrimSpace(cb))
-		p.node = &CommentNode{
-			span: Span{
-				Start: p.currentPoint(),
-				End:   Point{Line: p.currentLine()},
-			},
-			buf: buf,
-		}
-		return
-	}
-	if p.isHeadlinePrefix() {
-		possiblyCloseText()
-		p.state = headline
-		p.node = &HeadlineNode{
-			span: Span{
-				Start: p.currentPoint(),
-				End:   Point{Line: p.currentLine()},
-			},
-		}
-		return
-	}
-	if p.state == text {
-		return
-	}
-	p.state = text
-	p.node = &TextNode{
-		span: Span{
-			Start: p.currentPoint(),
-		},
-		buf: &bytes.Buffer{},
-	}
+func (p *Parser) currentLine() int {
+	return p.scanner.Line
 }
 
 func isHorizontalWhitespace(in byte) bool {
@@ -315,145 +212,159 @@ func isHorizontalWhitespace(in byte) bool {
 	}
 }
 
-func (p *Scanner) findWhitespaceDelimitedString(start, end int) string {
+func (p *Parser) findWhitespaceDelimitedString(start, end int) string {
 	s := start
-	for ; isHorizontalWhitespace(p.buffer[s]); s++ {
+	for ; isHorizontalWhitespace(p.scanner.LineBuf[s]); s++ {
 	}
 	e := end
-	for ; isHorizontalWhitespace(p.buffer[e]); e-- {
+	for ; isHorizontalWhitespace(p.scanner.LineBuf[e]); e-- {
 	}
-	return string(p.buffer[s:e])
+	return string(p.scanner.LineBuf[s:e])
 }
 
-func (p *Scanner) advanceLine() {
-	eol := p.findEOL()
-	if eol >= 0 {
-		p.nextLine()
-		p.offset = 0
-		eol++
-		if eol < len(p.buffer) {
-			tail := len(p.buffer[eol:])
-			copy(p.buffer[0:], p.buffer[eol:])
-			p.buffer = p.buffer[:tail]
-		} else {
-			p.buffer = p.buffer[:0]
-		}
+func (p *Parser) currentWholeLine() Span {
+	return Span{
+		Start: p.currentPoint(0),
+		End:   p.currentPoint(p.scanner.LineLen),
 	}
-}
-
-func (p *Scanner) consumeAll() {
-	p.buffer = p.buffer[:0]
 }
 
 // Consume takes in a fragment of an Org doc and tries to parse it.
 // If the fragment results in a production you can check on the output
 // channel.
-func (p *Scanner) Consume(in string) error {
+func (p *Parser) Parse(file string, in []byte) error {
 	if len(in) == 0 {
 		return nil
 	}
-	p.appendInput(in)
-	for {
-		if !p.containsLine() {
-			return nil
+	p.scanner.WithBytes(in)
+
+	var node Node = nil
+	state := empty
+
+	closeMultiLineStructure := func() {}
+
+	var keywordKey string
+	var keywordValue string
+
+	isKeywordLine := func() bool {
+		m := keywordRegexp.FindSubmatch(p.scanner.LineBuf)
+		if len(m) > 0 {
+			keywordKey = string(m[1])
+			keywordValue = string(m[2])
+			return true
 		}
-		eol := p.findEOL()
-		p.determineState()
-		switch p.state {
-		case empty:
-			return nil
-		case keyword:
-			node := p.node.(*KeywordNode)
-			node.span.End.Offset = eol + 1
-			p.out <- node
-			p.node = nil
-			p.advanceLine()
-			p.state = empty
-		case comment:
-			node := p.node.(*CommentNode)
-			node.span.End.Offset = eol + 1
-			for {
-				p.advanceLine()
-				if p.containsLine() {
-					eol = p.findEOL()
-					if cb, cl := p.isCommentLine(); cl {
-						node.buf.WriteByte('\n')
-						node.buf.WriteString(cb)
-						node.span.End.Line = p.currentLine()
-						node.span.End.Offset = eol + 1
-						continue
-					}
-					p.state = empty
-					node.Body = node.buf.String()
-					node.buf = nil
-					p.out <- node
-				}
-				break
+		return false
+	}
+
+	var commentBody string
+
+	isCommentLine := func() bool {
+		m := commentRegexp.FindSubmatch(p.scanner.LineBuf)
+		if len(m) > 0 {
+			commentBody = string(m[1])
+			return true
+		}
+		return false
+	}
+
+	var headlineLevel int
+	var headlineBody string
+	var headlineTags []string
+
+	isHeadlineLine := func() bool {
+		stars := 0
+		var pos int
+		var r rune
+		for pos, r = range p.scanner.LineBuf {
+			if r == '*' {
+				stars++
+				continue
 			}
-		case headline:
-			node := p.node.(*HeadlineNode)
-			node.span.End.Offset = eol + 1
-			node.Level = p.snagHeadline()
-			hl, tags := scanHeadline(p.findWhitespaceDelimitedString(node.Level, eol))
-			node.Body = hl
-			node.Tags = tags
-			p.out <- node
-			p.node = nil
-			p.advanceLine()
-			p.state = empty
-		case text:
-			node := p.node.(*TextNode)
-			for {
-				node.span.End.Line = p.currentLine()
-				node.span.End.Offset = eol + 1
-				node.buf.WriteString(string(p.buffer[0 : eol+1]))
-				p.advanceLine()
-				if p.containsLine() {
-					eol = p.findEOL()
-					p.determineState()
-					if p.state != text {
-						break
+			if stars == 0 || r != ' ' {
+				return false
+			}
+		}
+		headlineLevel = stars
+		headlineBody = ""
+		headlineTags = nil
+		in := p.findWhitespaceDelimitedString(pos, p.scanner.LineLen)
+		if len(in) == 0 {
+			return false
+		}
+		if in[len(in)-1] == ':' {
+			lastColon := len(in) - 1
+			for p := lastColon - 1; p > 0; p-- {
+				c := in[p]
+				if isTagChar(c) {
+					continue
+				} else if c == ':' {
+					if lastColon-p > 1 {
+						headlineTags = append(headlineTags, in[p+1:lastColon])
 					}
+					lastColon = p
 				} else {
 					break
 				}
 			}
+			headlineBody = strings.TrimSpace(in[:lastColon])
+		} else {
+			headlineBody = in
+		}
+		return true
+	}
+
+	for p.scanner.NextLine() {
+		switch {
+		case isKeywordLine():
+			closeMultiLineStructure()
+			state = empty
+			p.out <- &KeywordNode{
+				span:    p.currentWholeLine(),
+				Keyword: keywordKey,
+				Value:   strings.TrimSpace(keywordValue),
+			}
+		case isCommentLine():
+			var cn *CommentNode
+			if state == comment {
+				cn = node.(*CommentNode)
+				cn.buf.WriteByte('\n')
+				cn.span.End = p.currentPoint(0)
+			} else {
+				closeMultiLineStructure()
+				state = comment
+				cn = &CommentNode{
+					span: p.currentWholeLine(),
+					buf:  &bytes.Buffer{},
+				}
+				node = cn
+			}
+			cn.buf.WriteString(commentBody)
+		case isHeadlineLine():
+			closeMultiLineStructure()
+			state = empty
+			p.out <- &HeadlineNode{
+				span:  p.currentWholeLine(),
+				Level: headlineLevel,
+				Body:  headlineBody,
+				Tags:  headlineTags,
+			}
+		default:
+			var tn *TextNode
+			if state == text {
+				tn = node.(*TextNode)
+				tn.buf.WriteByte('\n')
+				tn.span.End = p.currentPoint(0)
+			} else {
+				closeMultiLineStructure()
+				state = text
+				tn = &TextNode{
+					span: p.currentWholeLine(),
+					buf:  &bytes.Buffer{},
+				}
+				node = tn
+			}
+			tn.buf.Write(p.scanner.LineBuf)
 		}
 	}
-}
-
-func (p *Scanner) EOF() {
-	if p.state == empty {
-		p.determineState()
-	}
-	eol := len(p.buffer)
-	switch p.state {
-	case empty:
-	case keyword:
-		node := p.node.(*KeywordNode)
-		node.span.End.Offset = eol + 1
-		p.out <- node
-	case comment:
-		node := p.node.(*CommentNode)
-		node.span.End.Offset = eol + 1
-		p.out <- node
-	case headline:
-		node := p.node.(*HeadlineNode)
-		node.span.End.Offset = eol + 1
-		node.Level = p.snagHeadline()
-		hl, tags := scanHeadline(p.findWhitespaceDelimitedString(node.Level, eol-1))
-		node.Body = hl
-		node.Tags = tags
-		p.out <- node
-	case text:
-		node := p.node.(*TextNode)
-		node.span.End.Line = p.currentLine()
-		node.span.End.Offset = eol + 1
-		node.buf.WriteString(string(p.buffer[0:eol]))
-		node.Body = node.buf.String()
-		node.buf = nil
-		p.out <- node
-	}
-	p.node = nil
-	close(p.out)
+	return nil
 }
