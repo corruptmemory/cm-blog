@@ -229,9 +229,11 @@ func (p *Parser) currentWholeLine() Span {
 	}
 }
 
-// Consume takes in a fragment of an Org doc and tries to parse it.
-// If the fragment results in a production you can check on the output
-// channel.
+type lexer struct {
+}
+
+type scanFn func(*lexer) scanFn
+
 func (p *Parser) Parse(file string, in []byte) error {
 	if len(in) == 0 {
 		return nil
