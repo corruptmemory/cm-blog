@@ -54,10 +54,8 @@ func lexDefault(l *lexer) stateFn {
 	case '#':
 		switch tryComment(l) {
 		case commentStart:
-			l.ignore()
 			return lexComment
 		case keywordStart:
-			l.ignore()
 			return lexKeyword
 		}
 	case ':':
