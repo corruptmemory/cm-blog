@@ -13,9 +13,10 @@ type itemType int
 
 const (
 	lexEmpty itemType = iota
-	lexCommentStart
-	lexKeywordStart
-	lexNewLine
+	lexTextLine
+	lexCommentLine
+	lexKeywordLine
+	lexHeadingLine
 )
 
 type item struct {
@@ -94,9 +95,15 @@ func (l *lexer) acceptWhile(accptFn func(rune) bool) {
 }
 
 func (l *lexer) acceptUntil(untilFn func(rune) bool) {
-	for r := l.next(); !l.isEOF() && !untilFn(r); r = l.next() {
+	for r := l.next(); r != eof && !untilFn(r); r = l.next() {
 	}
 	if !l.isEOF() {
 		l.backup()
 	}
+}
+
+func (l *lexer) acceptUntilEOL() {
+	for r := l.next(); r != eof && r != '\n'; r = l.next() {
+	}
+	l.backup()
 }

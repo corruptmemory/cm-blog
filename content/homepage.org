@@ -41,6 +41,10 @@ This some stuff in a block
     :GAGA: blorb
     :END:
 
+    :bar1-_-'$%:
+    this is some stuff in here
+    :END:
+
 *** This is a third title :play:
 I would like to thank the Academy for this award.  Being an actor I will likely talk for far too long.
 
