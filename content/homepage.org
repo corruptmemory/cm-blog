@@ -20,6 +20,7 @@ Welcome to my homepage, there are many like it, but this one is mine!
 
 *                  This is a title :fun:work:stuff:
 
+#+KEY[OPTIONAL]: VALUE
 ** PLAY This is another title :work_oiuo:foo:bar:
 
 This is some other text
@@ -29,6 +30,7 @@ This is some other text
 :END:
 
 This is some text right here.  Before the drawer
+#This is not a comment, but a bit of regular text
 
 #+BEGIN
 This some stuff in a block

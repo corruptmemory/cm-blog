@@ -114,6 +114,10 @@ func (s *Scanner) nextLine() bool {
 	return true
 }
 
+func (s *Scanner) next() {
+
+}
+
 func (s *Scanner) reset() {
 	s.pos = 0
 	s.line = ""
