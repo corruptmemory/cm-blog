@@ -24,12 +24,12 @@ func tryComment(l *lexer) commentResult {
 	return t
 }
 
-func tryHeading(l *lexer) bool {
+func tryHeading(start int, l *lexer) int {
 	l.acceptRun("*")
 	if strings.IndexRune(" \t", l.next()) >= 0 {
-		return true
+		return l.pos - start - 1
 	}
-	return false
+	return 0
 }
 
 func tryDrawer(l *lexer) bool {
@@ -41,7 +41,11 @@ func tryDrawer(l *lexer) bool {
 }
 
 func lexDefault(l *lexer) stateFn {
+	pos := l.pos
 	switch l.next() {
+	case eof:
+		l.close()
+		return nil
 	case '\n':
 		l.emit(item{
 			typ:   lexTextLine,
@@ -54,7 +58,7 @@ func lexDefault(l *lexer) stateFn {
 	case '#':
 		switch tryComment(l) {
 		case commentStart:
-			return lexComment
+			return lexComment(pos)
 		case keywordStart:
 			return lexKeyword
 		}
@@ -63,8 +67,9 @@ func lexDefault(l *lexer) stateFn {
 			return lexDrawer
 		}
 	case '*':
-		if tryHeading(l) {
-			return lexHeading
+		level := tryHeading(pos, l)
+		if level > 0 {
+			return lexHeading(pos, level)
 		}
 	case ' ', '\t':
 		return lexNotHeading
@@ -73,7 +78,11 @@ func lexDefault(l *lexer) stateFn {
 }
 
 func lexNotHeading(l *lexer) stateFn {
+	pos := l.pos
 	switch l.next() {
+	case eof:
+		l.close()
+		return nil
 	case '\n':
 		l.emit(item{
 			typ:   lexTextLine,
@@ -86,10 +95,8 @@ func lexNotHeading(l *lexer) stateFn {
 	case '#':
 		switch tryComment(l) {
 		case commentStart:
-			l.ignore()
-			return lexComment
+			return lexComment(pos)
 		case keywordStart:
-			l.ignore()
 			return lexKeyword
 		}
 	case ':':
@@ -102,28 +109,44 @@ func lexNotHeading(l *lexer) stateFn {
 	return lexText
 }
 
-func lexHeading(l *lexer) stateFn {
-	l.acceptUntilEOL()
-	l.emit(item{
-		typ:   lexHeadingLine,
-		text:  l.input[l.start : l.pos-1],
-		start: l.start,
-		end:   l.pos,
-	})
-	l.start = l.pos
-	return lexDefault
+func lexHeading(start, level int) func(*lexer) stateFn {
+	return func(l *lexer) stateFn {
+		l.emit(item{
+			typ:   lexHeadingLevel,
+			text:  l.input[start : start+level],
+			start: start,
+			end:   start + level,
+		})
+		l.acceptUntilEOL()
+		l.emit(item{
+			typ:   lexHeadingBody,
+			text:  l.input[l.start : l.pos-1],
+			start: l.start,
+			end:   l.pos,
+		})
+		l.start = l.pos
+		return lexDefault
+	}
 }
 
-func lexComment(l *lexer) stateFn {
-	l.acceptUntilEOL()
-	l.emit(item{
-		typ:   lexCommentLine,
-		text:  l.input[l.start : l.pos-1],
-		start: l.start,
-		end:   l.pos,
-	})
-	l.start = l.pos
-	return lexDefault
+func lexComment(start int) func(*lexer) stateFn {
+	return func(l *lexer) stateFn {
+		l.emit(item{
+			typ:   lexCommentStart,
+			text:  l.input[start : start+1],
+			start: start,
+			end:   start,
+		})
+		l.acceptUntilEOL()
+		l.emit(item{
+			typ:   lexCommentBody,
+			text:  l.input[l.start : l.pos-1],
+			start: l.start,
+			end:   l.pos,
+		})
+		l.start = l.pos
+		return lexDefault
+	}
 }
 
 func lexKeyword(l *lexer) stateFn {
@@ -135,5 +158,6 @@ func lexDrawer(l *lexer) stateFn {
 }
 
 func lexText(l *lexer) stateFn {
+
 	return nil
 }

@@ -14,9 +14,11 @@ type itemType int
 const (
 	lexEmpty itemType = iota
 	lexTextLine
-	lexCommentLine
+	lexCommentBody
+	lexCommentStart
 	lexKeywordLine
-	lexHeadingLine
+	lexHeadingLevel
+	lexHeadingBody
 )
 
 type item struct {
@@ -39,6 +41,10 @@ type stateFn func(l *lexer) stateFn
 
 func (l *lexer) emit(i item) {
 	l.items <- i
+}
+
+func (l *lexer) close() {
+	close(l.items)
 }
 
 func (l *lexer) next() (r rune) {
