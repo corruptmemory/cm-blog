@@ -1,46 +1,71 @@
 package org
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 )
 
-const (
-	eof rune = 0
-)
+const eof = -1
 
 type itemType int
 
 const (
-	lexEmpty itemType = iota
-	lexTextLine
-	lexCommentBody
-	lexCommentStart
-	lexKeywordLine
-	lexHeadingLevel
-	lexHeadingBody
+	itemError itemType = iota
+	itemLeadingSpace
+	itemNewline
+	itemEOF
+	itemTextLine
+	itemComment
+	itemKeyword
+	itemHeading
 )
 
+// Pos represents a byte position in the original input text from which
+// this template was parsed.
+type Pos int
+
+func (p Pos) Position() Pos {
+	return p
+}
+
 type item struct {
-	typ   itemType
-	text  string
-	start int
-	end   int
+	typ  itemType
+	pos  Pos
+	val  string
+	line int
 }
 
 type lexer struct {
-	name  string
-	input string
-	start int
-	pos   int
-	width int
-	items chan item
+	name      string
+	input     string
+	start     Pos
+	pos       Pos
+	width     Pos
+	items     chan item
+	line      int
+	startLine int
 }
 
 type stateFn func(l *lexer) stateFn
 
-func (l *lexer) emit(i item) {
-	l.items <- i
+// lex creates a new scanner for the input string.
+func lex(name, input string) *lexer {
+	l := &lexer{
+		name:      name,
+		input:     input,
+		items:     make(chan item),
+		line:      1,
+		startLine: 1,
+	}
+	go l.run()
+	return l
+}
+
+func (l *lexer) emit(t itemType) {
+	l.items <- item{t, l.start, l.input[l.start:l.pos], l.startLine}
+	l.start = l.pos
+	l.startLine = l.line
 }
 
 func (l *lexer) close() {
@@ -48,30 +73,45 @@ func (l *lexer) close() {
 }
 
 func (l *lexer) next() (r rune) {
-	if l.pos >= len(l.input) {
+	if int(l.pos) >= len(l.input) {
 		l.width = 0
 		return eof
 	}
-	r, l.width = utf8.DecodeLastRuneInString(l.input[l.pos:])
+	r, w := utf8.DecodeRuneInString(l.input[l.pos:])
+	l.width = Pos(w)
 	l.pos += l.width
-	return
+	if r == '\n' {
+		l.line++
+	}
+	return r
 }
 
 func (l *lexer) isEOF() bool {
-	return l.pos >= len(l.input)
+	return int(l.pos) >= len(l.input)
 }
 
 func (l *lexer) backup() {
 	l.pos -= l.width
-	l.width = 0
+	// Correct newline count.
+	if l.width == 1 && l.input[l.pos] == '\n' {
+		l.line--
+	}
 }
 
 func (l *lexer) ignore() {
+	l.line += strings.Count(l.input[l.start:l.pos], "\n")
 	l.start = l.pos
+	l.startLine = l.line
+}
+
+func (l *lexer) run() {
+	for lex := lexDefault; lex != nil; {
+		lex = lex(l)
+	}
 }
 
 func (l *lexer) peek() (r rune) {
-	if l.pos >= len(l.input) {
+	if int(l.pos) >= len(l.input) {
 		return eof
 	}
 	r, _ = utf8.DecodeRuneInString(l.input[l.pos:])
@@ -79,7 +119,7 @@ func (l *lexer) peek() (r rune) {
 }
 
 func (l *lexer) accept(valid string) bool {
-	if strings.IndexRune(valid, l.next()) >= 0 {
+	if strings.ContainsRune(valid, l.next()) {
 		return true
 	}
 	l.backup()
@@ -87,29 +127,156 @@ func (l *lexer) accept(valid string) bool {
 }
 
 func (l *lexer) acceptRun(valid string) {
-	for strings.IndexRune(valid, l.next()) >= 0 {
+	for strings.ContainsRune(valid, l.next()) {
 	}
 	l.backup()
 }
 
 func (l *lexer) acceptWhile(accptFn func(rune) bool) {
-	for accptFn(l.next()) {
+	for r := l.next(); r != eof && accptFn(r); r = l.next() {
 	}
-	if !l.isEOF() {
-		l.backup()
-	}
+	l.backup()
 }
 
 func (l *lexer) acceptUntil(untilFn func(rune) bool) {
-	for r := l.next(); r != eof && !untilFn(r); r = l.next() {
-	}
-	if !l.isEOF() {
-		l.backup()
-	}
+	l.acceptWhile(func(r rune) bool {
+		return !untilFn(r)
+	})
 }
 
 func (l *lexer) acceptUntilEOL() {
-	for r := l.next(); r != eof && r != '\n'; r = l.next() {
+	l.acceptUntil(func(r rune) bool {
+		return r == '\n'
+	})
+}
+
+func (l *lexer) ignoreToEOL() {
+	idx := strings.IndexByte(l.input[l.pos:], '\n')
+	if idx >= 0 {
+		l.pos = l.pos + Pos(idx+1)
+	} else {
+		l.pos = Pos(len(l.input))
 	}
-	l.backup()
+	l.ignore()
+}
+
+func (l *lexer) errorf(format string, args ...interface{}) stateFn {
+	l.items <- item{itemError, l.start, fmt.Sprintf(format, args...), l.startLine}
+	return nil
+}
+
+func lexDefault(l *lexer) stateFn {
+	switch l.next() {
+	case eof:
+		l.emit(itemEOF)
+		l.close()
+		return nil
+	case ' ', '\t':
+		return lexSpace
+	case '\n':
+		l.emit(itemNewline)
+		return lexDefault
+	case '#':
+		return lexCommentOrKeyword
+	case ':':
+		return lexDrawer
+	case '*':
+		return lexHeading
+	}
+	return lexText
+}
+
+func lexAfterLeadingSpace(l *lexer) stateFn {
+	switch l.next() {
+	case eof:
+		l.emit(itemEOF)
+		l.close()
+		return nil
+	case '\n':
+		l.emit(itemNewline)
+		return lexDefault
+	case '#':
+		return lexCommentOrKeyword
+	case ':':
+		return lexDrawer
+	}
+	return lexText
+}
+
+func lexSpace(l *lexer) stateFn {
+	l.acceptRun(" \t")
+	l.emit(itemLeadingSpace)
+	return lexAfterLeadingSpace
+}
+
+func lexHeading(l *lexer) stateFn {
+	l.acceptRun("*")
+	switch l.peek() {
+	case ' ', '\t':
+		l.acceptUntilEOL()
+		l.emit(itemHeading)
+		return lexDefault
+	}
+	return lexText
+}
+
+func lexCommentOrKeyword(l *lexer) stateFn {
+	switch l.peek() {
+	case ' ', '\t':
+		return lexComment
+	case '+':
+		return lexKeyword
+	}
+	return lexText
+}
+
+func lexComment(l *lexer) stateFn {
+	switch l.peek() {
+	case ' ', '\t':
+		l.acceptUntilEOL()
+		l.emit(itemComment)
+		return lexDefault
+	}
+	return lexText
+}
+
+func lexKeyword(l *lexer) stateFn {
+	switch l.peek() {
+	case '+':
+		l.acceptUntilEOL()
+		l.emit(itemKeyword)
+		return lexDefault
+	}
+	return lexText
+}
+
+func lexPossibleDrawer(l *lexer) stateFn {
+	for {
+		switch l.peek() {
+		case eof:
+			l.emit(itemKeyword)
+			return lexDefault
+		case ' ', '\t':
+			l.next()
+		case '\n':
+			l.emit(itemKeyword)
+			return lexDefault
+		default:
+			return lexText
+		}
+	}
+}
+
+func lexDrawer(l *lexer) stateFn {
+	l.acceptRun("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_$%'")
+	if l.next() == ':' {
+		return lexPossibleDrawer
+	}
+	return lexText
+}
+
+func lexText(l *lexer) stateFn {
+	l.acceptUntilEOL()
+	l.emit(itemTextLine)
+	return lexDefault
 }
