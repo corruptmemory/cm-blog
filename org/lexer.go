@@ -19,6 +19,7 @@ const (
 	itemComment
 	itemKeyword
 	itemHeading
+	itemNodeMarker
 )
 
 // Pos represents a byte position in the original input text from which
@@ -243,6 +244,10 @@ func lexComment(l *lexer) stateFn {
 func lexKeyword(l *lexer) stateFn {
 	switch l.peek() {
 	case '+':
+		l.accept("+")
+		if l.accept(" \t") {
+			return lexText
+		}
 		l.acceptUntilEOL()
 		l.emit(itemKeyword)
 		return lexDefault
@@ -250,27 +255,23 @@ func lexKeyword(l *lexer) stateFn {
 	return lexText
 }
 
-func lexPossibleDrawer(l *lexer) stateFn {
-	for {
-		switch l.peek() {
-		case eof:
-			l.emit(itemKeyword)
-			return lexDefault
-		case ' ', '\t':
-			l.next()
-		case '\n':
-			l.emit(itemKeyword)
-			return lexDefault
-		default:
-			return lexText
-		}
+func lexPossibleNodeMarker(l *lexer) stateFn {
+	switch l.peek() {
+	case eof, '\n':
+		l.emit(itemNodeMarker)
+	case ' ', '\t':
+		l.acceptUntilEOL()
+		l.emit(itemNodeMarker)
+	default:
+		return lexText
 	}
+	return lexDefault
 }
 
 func lexDrawer(l *lexer) stateFn {
-	l.acceptRun("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_$%'")
+	l.acceptRun("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_$%'+")
 	if l.next() == ':' {
-		return lexPossibleDrawer
+		return lexPossibleNodeMarker
 	}
 	return lexText
 }

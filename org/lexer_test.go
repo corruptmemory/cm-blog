@@ -21,6 +21,8 @@ var (
 	newLineItem = mkItem(itemNewline, "\n")
 )
 
+const docExample = ``
+
 var testCases = []lexTest{
 	{
 		name:  "basic text",
@@ -165,6 +167,89 @@ This is some text -- line 2`,
 		input: "#+KEY: VALUE",
 		items: []item{
 			mkItem(itemKeyword, "#+KEY: VALUE"),
+		},
+	},
+	{
+		name:  "leading space then keyword",
+		input: "   #+KEY: VALUE",
+		items: []item{
+			mkItem(itemLeadingSpace, "   "),
+			mkItem(itemKeyword, "#+KEY: VALUE"),
+		},
+	},
+	{
+		name:  "leading space then keyword",
+		input: "   #+KEY: VALUE",
+		items: []item{
+			mkItem(itemLeadingSpace, "   "),
+			mkItem(itemKeyword, "#+KEY: VALUE"),
+		},
+	},
+	{
+		name:  "not a keyword",
+		input: "#+ KEY: VALUE",
+		items: []item{
+			mkItem(itemTextLine, "#+ KEY: VALUE"),
+		},
+	},
+	{
+		name:  "basic drawer",
+		input: ":DRAWER:",
+		items: []item{
+			mkItem(itemNodeMarker, ":DRAWER:"),
+		},
+	},
+	{
+		name:  "space then drawer",
+		input: "   :DRAWER:",
+		items: []item{
+			mkItem(itemLeadingSpace, "   "),
+			mkItem(itemNodeMarker, ":DRAWER:"),
+		},
+	},
+	{
+		name:  "setting node",
+		input: ":SETTING: Value",
+		items: []item{
+			mkItem(itemNodeMarker, ":SETTING: Value"),
+		},
+	},
+	{
+		name:  "setting node with plus",
+		input: ":SETTING+: Value",
+		items: []item{
+			mkItem(itemNodeMarker, ":SETTING+: Value"),
+		},
+	},
+	{
+		name:  "flag",
+		input: ":FLAG+:",
+		items: []item{
+			mkItem(itemNodeMarker, ":FLAG+:"),
+		},
+	},
+	{
+		name: "drawer",
+		input: `:MY_BLOCK:
+This is some text
+:A-THINGY: With a value   
+:REALLY-TEXT:As you can see
+# But I can comment anywhere
+:END:
+`,
+		items: []item{
+			mkItem(itemNodeMarker, ":MY_BLOCK:"),
+			newLineItem,
+			mkItem(itemTextLine, "This is some text"),
+			newLineItem,
+			mkItem(itemNodeMarker, ":A-THINGY: With a value   "),
+			newLineItem,
+			mkItem(itemTextLine, ":REALLY-TEXT:As you can see"),
+			newLineItem,
+			mkItem(itemComment, "# But I can comment anywhere"),
+			newLineItem,
+			mkItem(itemNodeMarker, ":END:"),
+			newLineItem,
 		},
 	},
 }

@@ -23,6 +23,9 @@ Welcome to my homepage, there are many like it, but this one is mine!
 #+KEY[OPTIONAL]: VALUE
 ** PLAY This is another title :work_oiuo:foo:bar:
 
+#+ This is just a comment, not a keyword
+#+K: On the other hand, this is a keyword
+
 This is some other text
 
 :PROPERTIES:
