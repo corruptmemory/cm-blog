@@ -21,8 +21,6 @@ var (
 	newLineItem = mkItem(itemNewline, "\n")
 )
 
-const docExample = ``
-
 var testCases = []lexTest{
 	{
 		name:  "basic text",
